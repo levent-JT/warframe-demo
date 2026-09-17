@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#101c27" />
+  <title>KINETIC · 动势试炼 — Warframe 移动 Demo</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23c4a677' d='M32 2 60 32 32 62 4 32Zm0 12L16 32l16 18 16-18Z'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <canvas id="game" tabindex="0" aria-label="第三人称跑酷训练场，点击进入后使用键盘和鼠标操作"></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <header class="topbar">
+    <div class="brand"><span class="emblem">◈</span><div>KINETIC <small>MOVEMENT LAB / 动势试炼</small></div></div>
+    <div class="top-right"><span class="live-dot"></span><span id="mode-label">自由训练</span><span class="divider"></span><button id="menu-button">操作 & 设置 <kbd>Esc</kbd></button></div>
+  </header>
+  <main id="menu" class="menu">
+    <div class="eyebrow"><span>EXPERIMENT 002</span><i></i> COMBAT & MOVEMENT</div>
+    <h1>让移动<br>成为<span>本能。</span></h1>
+    <p class="intro">滑行，跃起，转身瞄准。<br>把跑酷、枪械与近战连成一场流畅的交战。</p>
+    <div class="menu-actions"><button id="start" class="primary">进入训练场 <span>↗</span></button><button id="help-button" class="secondary" aria-label="查看全部操作">操作指南</button></div>
+    <div class="menu-note"><span>⌨ 键盘 + 鼠标</span><span>第三人称 · 自由练习</span></div>
+    <div class="menu-tabs"><button id="combat-button">枪械与机器人训练 <span>↗</span></button><button id="melee-button">近战武器与动作 <span>↗</span></button><button id="zones-button">切换训练区 <span>↗</span></button><button id="bindings-button">自定义按键 <span>↗</span></button><button id="tuning-button">调整移动与瞄准 <span>↗</span></button><button id="route-button">开始计时路线 <span>↗</span></button></div>
+    <div class="project-note">Warframe 通用跑酷机制的独立练习 demo<br>原创装甲人形 · 可调物理参数</div>
+  </main>
+  <aside id="session-card" class="session-card"><div class="eyebrow">THE SANCTUARY / 训练场 01</div><div class="map-title">悬空回廊</div><div class="scene-stats"><span>06 <small>训练区域</small></span><span>14 <small>动作练习</small></span><span>∞ <small>自由衔接</small></span></div><p>从地面到墙面，再到空中。<br>所有障碍都可以用多种路径通过。</p><div class="card-line"></div><span class="subtle">起点广场 → 滑铲通道 → 空中平台 → 蹬墙回廊</span></aside>
+  <div id="hud" class="hud hidden">
+    <div class="minimap-panel"><canvas id="minimap" width="180" height="230" aria-label="训练场小地图"></canvas><div id="zone-label">起点广场</div></div>
+    <div id="route-hud" class="route-hud hidden"><span>计时路线 <b id="route-progress">01 / 08</b></span><strong id="route-time">00:00.00</strong><small id="route-best">穿过金色圆环</small></div>
+    <div id="crosshair" class="crosshair" aria-hidden="true"><i></i><i></i><b></b></div>
+    <div class="aim-status"><span id="aim-state">自由视角</span><small id="look-status"></small></div>
+    <div class="combat-panel"><div class="combat-title"><strong id="gun-name">自动步枪</strong><span id="gun-mode">AUTO</span></div><div class="ammo"><b id="ammo-current">30</b><span id="ammo-capacity">/ 30</span><small id="gun-status">备用弹药 ∞</small></div><div class="reload-track"><b id="reload-progress"></b></div><div class="gun-slots"><span data-gun-slot="0"><kbd data-keys="gun1"></kbd> 步枪</span><span data-gun-slot="1"><kbd data-keys="gun2"></kbd> 手枪</span><span data-gun-slot="2"><kbd data-keys="gun3"></kbd> 霰弹</span></div><small class="gun-controls"><kbd data-keys="fire"></kbd> 射击 · <kbd data-keys="reload"></kbd> 换弹 · <kbd data-keys="quickSwap"></kbd> 切枪</small></div>
+    <div class="melee-panel"><div class="melee-title"><strong id="melee-weapon">双手棍杖</strong><span><kbd data-keys="switchWeapon"></kbd> 切换</span></div><span id="melee-action">随时接入近战</span><div class="melee-track"><b id="melee-progress"></b></div><small><span id="melee-phase">基础动作</span><span><kbd data-keys="melee"></kbd> 攻击 · <kbd data-keys="heavy"></kbd> 重击</span></small></div>
+    <div id="context" class="context"></div>
+    <div id="target-label" class="target-label"></div>
+    <div class="vitals"><div><span id="sprint-state">常速移动</span><span>击倒 <b id="kill-count">0</b></span></div><label>护盾 <b id="shield-value">80</b><i><em id="shield-bar"></em></i></label><label>生命 <b id="health-value">100</b><i><em id="health-bar"></em></i></label></div>
+    <div class="motion-panel"><div class="eyebrow">MOMENTUM / 动量</div><div class="speed"><strong id="speed">0.0</strong><span>m/s</span><div class="speed-bars" id="speed-bars"></div></div><div class="motion-meta"><span id="state">待机</span><span>高度 <b id="height">0.0</b> m</span></div><div id="combo" class="combo">冲刺 → 滑铲 → 子弹跳 → 二段跳</div></div>
+    <div class="resources"><div><span>子弹跳 <kbd data-keys="crouch,jump"></kbd></span><i id="bullet-ready"></i></div><div><span>二段跳 <kbd data-keys="jump"></kbd></span><i id="jump-ready"></i></div><div><span>空中翻滚 <kbd data-keys="roll"></kbd></span><i id="roll-ready"></i></div><div class="meter-row"><span>滑翔 <kbd data-keys="aim"></kbd></span><div class="meter"><b id="glide-meter"></b></div></div><div class="meter-row"><span>攀附</span><div class="meter"><b id="latch-meter"></b></div></div></div>
+    <div class="bottom-hint"><span><kbd data-keys="forward,left,back,right"></kbd> 移动</span><span><kbd data-keys="sprint"></kbd> 轻点翻滚 · 长按切换奔跑</span><span><kbd data-keys="crouch"></kbd> 滑铲</span><span><kbd data-keys="jump"></kbd> 跳跃 / 蹬墙</span><span><kbd data-keys="help"></kbd> 指南</span></div>
+  </div>
+  <div id="damage-vignette" class="damage-vignette" aria-hidden="true"></div>
+  <div id="down-screen" class="down-screen hidden"><span>战甲失去行动能力</span><strong><b id="respawn-time">2.5</b> 秒后重新部署</strong><small>护盾与弹药将在起点恢复</small></div>
+  <div id="toast" class="toast" role="status"></div>
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <section class="modal-body"><header><div><span class="eyebrow">KINETIC / FIELD MANUAL</span><h2 id="modal-title">操作指南</h2></div><button id="close-modal" aria-label="关闭">×</button></header><div id="modal-content"></div></section>
+  </div>
+  <footer id="footer"><span>WARFRAME-INSPIRED COMBAT & MOVEMENT STUDY</span><span>LOCAL BUILD / 01.4 <span class="gold">●</span></span></footer>
+  <div id="error" class="error hidden" role="alert"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

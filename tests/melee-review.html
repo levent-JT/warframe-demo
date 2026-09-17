@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KINETIC · 近战动作检查</title>
+<style>body{margin:0;background:#122534;color:#d9e5eb;font:14px system-ui}canvas{display:block}aside{position:fixed;top:18px;left:18px;right:18px;padding:16px;background:#102331ed;border:1px solid #546778}h1{font-size:18px;margin:0 0 10px}select,button{padding:8px;margin:4px;background:#d3b780;border:0;color:#132333}label{display:inline-block;margin:4px}input[type=range]{vertical-align:middle;width:160px}p{font-size:12px;color:#99b2c3;margin:8px 0 0}</style></head><body>
+<canvas id="review"></canvas><aside><h1>近战动作检查 · 开发验收</h1><label>武器 <select id="weapon"><option value="staff">双手棍杖</option><option value="sword">单手剑</option></select></label><label>动作 <select id="move"></select></label><label>动作进度 <input id="progress" type="range" min="0" max="100" value="50"></label><button id="angle">切换正面 / 侧面 / 背面</button><label><input type="checkbox" id="play"> 循环演示</label><p>姿态检查：按关键帧预览独立编排的基础动作。实际连段、取消和碰撞另由浏览器验收覆盖。</p></aside>
+<script type="module">
+import * as THREE from 'three';
+import { createCharacter } from '../src/character.js';
+import { MovementController } from '../src/movement.js';
+import { MELEE_SETS, BRANCHES } from '../src/melee.js';
+const scene=new THREE.Scene();scene.background=new THREE.Color('#172e40');
+const renderer=new THREE.WebGLRenderer({canvas:document.querySelector('canvas'),antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.2;
+const camera=new THREE.PerspectiveCamera(38,innerWidth/innerHeight,.1,100);
+scene.add(new THREE.HemisphereLight(0xd9f2ff,0x40536b,3));const light=new THREE.DirectionalLight(0xffe9ce,4);light.position.set(-3,6,-5);scene.add(light);
+const grid=new THREE.GridHelper(20,40,0x678d9f,0x29485c);grid.position.z=25;scene.add(grid);
+const character=createCharacter(scene),player=new MovementController();let angle=0,previous=0,progress=.5;
+const $=id=>document.getElementById(id);
+function options(){const old=$('move').value;$('move').innerHTML='<option value="ready">持械待机</option>'+Object.entries(MELEE_SETS[$('weapon').value]).flatMap(([branch,moves])=>moves.map((m,i)=>`<option value="${branch}:${i}">${BRANCHES[branch]} · ${m.name}</option>`)).join('');if([...$('move').options].some(o=>o.value===old))$('move').value=old;else $('move').value='neutral:0';reset();}
+function reset(){player.reset({x:0,y:0,z:25});player.grounded=true;player.melee.weapon=$('weapon').value;player.melee.drawn=true;character.update(player,0,0);progress=Number($('progress').value)/100;}
+function pose(t){
+ const [branch,index]=$('move').value.split(':');
+ player.state=branch==='slide'?'slide':branch==='aerial'?'jump':branch==='slam'?'slam':'idle';
+ player.grounded=!['aerial','slam'].includes(branch);player.height=branch==='slide'?.88:1.85;player.velocity.set(0,0,0);
+ if(branch!=='ready'){
+  if(!player.melee.active || player.melee.active.branch!==branch || player.melee.active.index!==Number(index)){
+   player.melee.lastBranch=branch;player.melee.chainAge=0;player.melee.nextIndex=Number(index);player.melee.start(branch,{yaw:0},player,branch==='slam');
+  }
+  player.melee.active.elapsed=player.melee.active.move.duration*t;
+ }else player.melee.active=null;
+}
+function draw(now){
+ const dt=Math.min(.05,(now-previous)/1000||1/60);previous=now;
+ if($('play').checked){progress=(progress+dt/(player.melee.active?.move.duration||1.2))%1;$('progress').value=Math.round(progress*100);}
+ pose(progress);character.update(player,dt,now/1000);
+ const target=player.position.clone().add(new THREE.Vector3(0,1.02,0)),offset=angle===0?new THREE.Vector3(-2.6,1.05,-5.1):angle===1?new THREE.Vector3(5.1,.65,-.8):new THREE.Vector3(2.6,1.05,5.1);
+ camera.position.copy(target).add(offset);camera.lookAt(target);renderer.render(scene,camera);requestAnimationFrame(draw);
+}
+$('weapon').onchange=options;$('move').onchange=reset;$('progress').oninput=()=>{progress=Number($('progress').value)/100;};$('angle').onclick=()=>{angle=(angle+1)%3;};
+window.addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});options();requestAnimationFrame(draw);
+</script></body></html>

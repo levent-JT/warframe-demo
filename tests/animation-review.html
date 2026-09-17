@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KINETIC · 动画姿态检查</title>
+<style>body{margin:0;background:#122534;color:#d9e5eb;font:14px system-ui}canvas{display:block;width:100vw;height:100vh}aside{position:fixed;top:20px;left:20px;right:20px;padding:16px;background:#102331ed;border:1px solid #546778}h1{font-size:18px;margin:0 0 10px}select,button{padding:8px;margin:4px;background:#d3b780;border:0;color:#132333}label{display:inline-block;margin:5px}input{vertical-align:middle;width:160px}p{font-size:12px;color:#99b2c3;margin:8px 0 0}</style></head><body>
+<canvas id="review"></canvas><aside><h1>动画姿态检查 · 开发验收</h1><label>动作 <select id="action"><option value="idle">待机</option><option value="sprint">冲刺</option><option value="crouch">蹲伏</option><option value="slide">滑铲</option><option value="bullet">子弹跳</option><option value="double">二段跳</option><option value="roll">翻滚</option><option value="glide">滑翔</option><option value="latch">攀附</option><option value="aim">站立瞄准</option><option value="aimWalk">瞄准侧移</option></select></label><label>动作进度 <input id="progress" type="range" min="0" max="100" value="45"></label><button id="angle">切换正面 / 侧面</button><p>静态姿态与关节检查；实际输入、位移和取消由浏览器验收与自动回归覆盖。</p></aside>
+<script type="module">
+import * as THREE from 'three';
+import { createCharacter } from '../src/scene.js';
+import { MovementController } from '../src/movement.js';
+const scene=new THREE.Scene();scene.background=new THREE.Color('#172e40');
+const renderer=new THREE.WebGLRenderer({canvas:document.querySelector('canvas'),antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.3;
+const camera=new THREE.PerspectiveCamera(40,innerWidth/innerHeight,.1,100);
+scene.add(new THREE.HemisphereLight(0xd9f2ff,0x40536b,3));const key=new THREE.DirectionalLight(0xffe9ce,4);key.position.set(-3,6,-5);scene.add(key);
+const grid=new THREE.GridHelper(20,40,0x678d9f,0x29485c);grid.position.z=25;scene.add(grid);
+const character=createCharacter(scene),player=new MovementController();let side=false;
+function draw(){
+ const state=document.getElementById('action').value,progress=Number(document.getElementById('progress').value)/100;
+ player.reset({x:0,y:0,z:25});player.grounded=true;character.update(player,0,0);
+ const duration=['bullet','double','roll'].includes(state)?(state==='bullet'?.5:.42):1.3;
+ const frames=Math.max(1,Math.round((.16+duration*progress)*120));
+ for(let i=0;i<frames;i++){
+  player.state=state;player.grounded=['idle','sprint','slide','roll','crouch','aim','aimWalk'].includes(state);player.height=['slide','roll','crouch'].includes(state)?.88:1.85;
+  player.aiming=['glide','latch','aim','aimWalk'].includes(state);player.pitch=player.aiming?.18:0;
+  player.velocity.set(state==='aimWalk'?4.8:0,state==='bullet'?8:0,state==='sprint'?-12.5:state==='slide'?-16:state==='bullet'?-25:0);
+  player.position.addScaledVector(player.velocity,1/120);player.clock=i/120;
+  player.actionTime=Math.max(0,i/120-.16);player.doubleTimer=Math.max(0,.42-player.actionTime);player.rollTimer=Math.max(0,.42-player.actionTime);player.bulletTimer=Math.max(0,.5-player.actionTime);
+  if(state==='latch')player.wall={normal:new THREE.Vector3(0,0,1)};
+  character.update(player,1/120,player.clock);
+ }
+ grid.position.z=player.position.z;
+ const target=player.position.clone().add(new THREE.Vector3(0,1.05,0));
+ camera.position.copy(target).add(new THREE.Vector3(side?4:-2.8,1.0,side?-.3:-4.8));camera.lookAt(target);renderer.render(scene,camera);
+}
+document.getElementById('action').onchange=draw;document.getElementById('progress').oninput=draw;document.getElementById('angle').onclick=()=>{side=!side;draw();};
+window.addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();draw();});draw();
+</script></body></html>

@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KINETIC · 持枪与装甲检查</title>
+<style>body{margin:0;background:#172e40;color:#d9e5eb;font:14px system-ui}canvas{display:block}aside{position:fixed;left:18px;right:18px;top:18px;background:#102331ed;border:1px solid #546778;padding:14px}h1{font-size:18px;margin:0 0 8px}select{background:#d3b780;color:#132333;padding:8px;border:0;margin:4px}label{white-space:nowrap}p{font-size:12px;color:#99b2c3;margin:8px 0 0}</style></head>
+<body><canvas></canvas><aside><h1>装甲 / 枪械姿态检查</h1><label>枪械 <select id="gun"><option value="0">自动步枪</option><option value="1">手枪</option><option value="2">霰弹枪</option></select></label><label>动作 <select id="pose"><option value="aim">瞄准</option><option value="reload">换弹</option><option value="sprint">奔跑持枪</option><option value="down">倒地</option></select></label><label>观察 <select id="angle"><option value="front">正面</option><option value="side">侧面</option><option value="back">背面</option></select></label><p>检查枪托、双手握持、弹匣与分层装甲。真实动作由主场景输入验收覆盖。</p></aside>
+<script type="module">
+import * as THREE from 'three';import {createCharacter} from '../src/character.js';import {MovementController} from '../src/movement.js';import {CombatController} from '../src/combat.js';
+const scene=new THREE.Scene();scene.background=new THREE.Color('#172e40');
+const renderer=new THREE.WebGLRenderer({canvas:document.querySelector('canvas'),antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.3;
+scene.add(new THREE.HemisphereLight(0xd9f2ff,0x40536b,3));const light=new THREE.DirectionalLight(0xffe9ce,4);light.position.set(-3,6,-5);scene.add(light);
+const grid=new THREE.GridHelper(20,40,0x678d9f,0x29485c);scene.add(grid);
+const camera=new THREE.PerspectiveCamera(34,innerWidth/innerHeight,.1,100),character=createCharacter(scene),player=new MovementController(),combat=new CombatController();player.combat=combat;
+function draw(){
+ player.reset({x:0,y:0,z:0});combat.resetPlayer();combat.selected=Number(document.getElementById('gun').value);const pose=document.getElementById('pose').value;
+ player.grounded=true;player.state=pose==='sprint'?'sprint':'aim';player.aiming=pose==='aim';player.pitch=.05;
+ combat.sprinting=pose==='sprint';combat.reloadLeft=pose==='reload'?combat.gun.reload*.52:0;combat.health=pose==='down'?0:100;
+ for(let i=0;i<90;i++){player.velocity.set(0,0,pose==='sprint'?-12.5:0);player.position.addScaledVector(player.velocity,1/120);character.update(player,1/120,i/120);}
+ grid.position.copy(player.position);const target=player.position.clone().add(new THREE.Vector3(0,1.1,0)),view=document.getElementById('angle').value;
+ camera.position.copy(target).add(view==='front'?new THREE.Vector3(-2.4,.45,-4.4):view==='side'?new THREE.Vector3(4,.4,-1):new THREE.Vector3(2.4,.45,4.4));camera.lookAt(target);renderer.render(scene,camera);
+}
+document.querySelectorAll('select').forEach(select=>select.onchange=draw);window.onresize=()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();draw();};draw();
+</script></body></html>
