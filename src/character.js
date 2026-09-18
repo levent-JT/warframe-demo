@@ -7,7 +7,21 @@ import { Spring } from './motion-math.js';
 
 // Original armor built around a consistent articulated rig. No official mesh or
 // animation assets: tapered shells, layered plates, and a forward helmet crest.
-function shellGeometry(rings, segments = 12) {
+function shellGeometry(profile, segments = 24) {
+  // Smooth the longitudinal profile as well as the circumference. Four samples
+  // per span retain authored joint clearances without polygonal tube shoulders.
+  const rings = [];
+  for (let r = 0; r < profile.length - 1; r++) for (let j = 0; j < 4; j++) {
+    const t = j / 4, row = [];
+    for (let k = 0; k < 4; k++) {
+      const a = profile[Math.max(0, r - 1)][k] || 0, b = profile[r][k] || 0;
+      const c = profile[r + 1][k] || 0, d = profile[Math.min(profile.length - 1, r + 2)][k] || 0;
+      row[k] = k === 0 ? b + (c - b) * t : .5 * ((2*b) + (-a+c)*t + (2*a-5*b+4*c-d)*t*t + (-a+3*b-3*c+d)*t*t*t);
+      if (k === 1 || k === 2) row[k] = Math.max(.004, row[k]);
+    }
+    rings.push(row);
+  }
+  rings.push(profile.at(-1));
   const positions = [], indices = [];
   for (const [y, width, depth, z = 0] of rings) for (let i = 0; i < segments; i++) {
     const a = i / segments * Math.PI * 2; positions.push(Math.cos(a) * width, y, Math.sin(a) * depth + z);
@@ -30,39 +44,57 @@ function shellGeometry(rings, segments = 12) {
 export function createCharacter(scene) {
   const root = new THREE.Group(), rig = new THREE.Group(); root.add(rig); scene.add(root);
   root.name = 'AUREL / original armored runner';
-  const armor = new THREE.MeshStandardMaterial({ color: 0xd2dadb, metalness: .48, roughness: .39 });
-  const secondary = new THREE.MeshStandardMaterial({ color: 0x4c7180, metalness: .57, roughness: .45 });
-  const suit = new THREE.MeshStandardMaterial({ color: 0x14232e, metalness: .24, roughness: .7 });
+  const armor = new THREE.MeshStandardMaterial({ color: 0xd7d9d3, metalness: .38, roughness: .30 });
+  const secondary = new THREE.MeshStandardMaterial({ color: 0x34586a, metalness: .62, roughness: .37 });
+  const suit = new THREE.MeshStandardMaterial({ color: 0x12212a, metalness: .12, roughness: .78 });
   const trim = new THREE.MeshStandardMaterial({ color: 0xbda16e, metalness: .72, roughness: .33 });
   const energy = new THREE.MeshBasicMaterial({ color: 0x6ee8de });
   const black = new THREE.MeshStandardMaterial({ color: 0x09151d, metalness: .45, roughness: .3 });
-  const sphere = new THREE.SphereGeometry(1, 16, 10), cube = new THREE.BoxGeometry(1, 1, 1), joints = {};
+  const sphere = new THREE.SphereGeometry(1, 24, 16), cube = new THREE.BoxGeometry(1, 1, 1), joints = {};
   function shape(parent, geometry, material, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1) {
     const mesh = new THREE.Mesh(geometry, material); mesh.position.set(x, y, z); mesh.scale.set(sx, sy, sz);
     mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
   }
   function shell(parent, material, rings, x = 0, y = 0, z = 0) { return shape(parent, shellGeometry(rings), material, x, y, z); }
-  function plate(parent, material, points, depth, x = 0, y = 0, z = 0) {
+  function plate(parent, material, points, depth, x = 0, y = 0, z = 0, crown = .018) {
     const outline = new THREE.Shape(); outline.moveTo(...points[0]); for (const point of points.slice(1)) outline.lineTo(...point); outline.closePath();
-    const geometry = new THREE.ExtrudeGeometry(outline, { depth, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: .006, bevelThickness: .006, curveSegments: 1 });
+    const geometry = new THREE.ExtrudeGeometry(outline, { depth, bevelEnabled: true, bevelSegments: 3, steps: 1, bevelSize: .009, bevelThickness: .007, curveSegments: 1 });
+    geometry.computeBoundingBox();
+    const bounds = geometry.boundingBox, positions = geometry.attributes.position;
+    for (let i = 0; i < positions.count; i++) {
+      const u = (positions.getX(i) - bounds.min.x) / (bounds.max.x - bounds.min.x);
+      const v = (positions.getY(i) - bounds.min.y) / (bounds.max.y - bounds.min.y);
+      positions.setZ(i, positions.getZ(i) + (z < 0 ? -1 : 1) * crown * Math.sin(u*Math.PI) * Math.sin(v*Math.PI));
+    }
+    geometry.computeVertexNormals();
     return shape(parent, geometry, material, x, y, z);
+  }
+  function seam(parent, material, points, radius = .005) {
+    const curve = new THREE.CatmullRomCurve3(points.map(p => new THREE.Vector3(...p)));
+    return shape(parent, new THREE.TubeGeometry(curve, 20, radius, 6, false), material);
   }
   const torso = new THREE.Group(); torso.position.y = 1.1; rig.add(torso); joints.torso = torso;
   shell(torso, suit, [[-.22,.17,.105],[-.12,.18,.115],[.05,.17,.105],[.22,.23,.135],[.36,.25,.105]]);
   for (const sign of [-1, 1]) {
-    plate(torso, armor, [[.035,.34],[.21,.34],[.245,.24],[.19,.04],[.095,-.03],[.035,.06]].map(([x,y])=>[sign*x,y]), .045, 0, 0, -.15);
+    // Pectoral volumes wrap into the narrow waist; inset seams stay readable in
+    // the game camera without growing the shoulders or obstructing the arms.
+    shell(torso, armor, [[.015,.040,.031],[.075,.070,.055],[.19,.095,.081],[.30,.084,.061],[.34,.045,.031]], sign*.117, 0, -.094);
+    seam(torso, trim, [[sign*.042,.32,-.152],[sign*.055,.21,-.183],[sign*.076,.09,-.166],[sign*.095,.026,-.133]], .006);
+    seam(torso, secondary, [[sign*.09,.31,-.165],[sign*.178,.285,-.171],[sign*.207,.20,-.147]], .009);
     plate(torso, secondary, [[.09,.02],[.19,-.01],[.2,-.15],[.12,-.19],[.075,-.08]].map(([x,y])=>[sign*x,y]), .035, 0, 0, -.135);
     for (let i = 0; i < 3; i++) {
       const rib = shape(torso, cube, secondary, sign * .173, .11 - i * .065, .015, .032, .019, .21); rib.rotation.z = sign * .16;
       shape(torso, cube, suit, sign * .093, .17 + i * .047, .137, .082, .021, .014);
     }
-    const spine = shape(torso, cube, armor, sign * .066, .05, .14, .042, .38, .055); spine.rotation.z = sign * -.12;
-    shape(torso, cube, energy, sign * .068, .15, .173, .009, .17, .014);
+    seam(torso, armor, [[sign*.08,-.13,.14],[sign*.062,.04,.161],[sign*.10,.23,.152],[sign*.19,.32,.105]], .025);
+    seam(torso, energy, [[sign*.066,-.03,.183],[sign*.066,.10,.185],[sign*.096,.22,.173]], .004);
     // Scapular shells and a segmented lumbar plate make the back read as armor
     // in the normal third-person view, with a narrow articulated waist.
-    plate(torso,armor,[[sign*.07,.34],[sign*.205,.32],[sign*.23,.21],[sign*.14,.075],[sign*.055,.13]],.034,0,0,.14);
-    plate(torso,secondary,[[sign*.06,.12],[sign*.14,.07],[sign*.15,-.12],[sign*.07,-.18]],.032,0,0,.13);
-    const vent=shape(torso,cube,trim,sign*.15,.22,.19,.035,.11,.018);vent.rotation.z=sign*.3;
+    const scapula=shell(torso,armor,[[.073,.028,.018],[.15,.074,.045],[.255,.088,.058],[.325,.059,.037],[.34,.028,.019]],sign*.137,0,.115);
+    scapula.rotation.z=sign*-.07;
+    shell(torso,secondary,[[-.17,.026,.018],[-.08,.043,.032],[.065,.043,.028],[.115,.020,.016]],sign*.106,0,.127);
+    seam(torso,trim,[[sign*.12,.095,.155],[sign*.172,.21,.179],[sign*.18,.285,.164]],.006);
+    seam(torso,secondary,[[sign*.084,.313,.139],[sign*.148,.314,.163],[sign*.205,.262,.15]],.007);
     for(let i=0;i<3;i++)shape(torso,cube,energy,sign*.09,.04-i*.052,.173,.011,.024,.014);
   }
   plate(torso, trim, [[-.019,.32],[.019,.32],[.026,.02],[0,-.10],[-.026,.02]], .022, 0, 0, -.181);
@@ -70,16 +102,18 @@ export function createCharacter(scene) {
   shell(torso, black, [[.34,.10,.08],[.46,.075,.075]]);
   const head = new THREE.Group(); head.position.set(0, .50, -.015); torso.add(head); joints.head = head;
   shell(head, black, [[-.17,.052,.07],[-.1,.088,.10],[.06,.115,.105],[.17,.082,.07],[.20,.034,.03]]);
-  shell(head, armor, [[-.13,.064,.074,-.047],[-.05,.105,.105,-.02],[.08,.137,.119],[.17,.105,.081],[.21,.04,.028]]);
+  shell(head, armor, [[-.155,.040,.047,-.051],[-.09,.083,.077,-.033],[.02,.111,.105,-.007],[.105,.119,.108],[.18,.085,.075],[.21,.032,.028]]);
+  // Faceless swept visor and cheek channels replace separate robot eyes.
+  seam(head, black, [[-.108,.045,-.080],[-.072,.023,-.123],[0,.002,-.145],[.072,.023,-.123],[.108,.045,-.080]], .014);
+  seam(head, energy, [[-.094,.036,-.102],[-.055,.017,-.139],[0,.007,-.155],[.055,.017,-.139],[.094,.036,-.102]], .0035);
   for (const sign of [-1,1]) {
-    const brow = shape(head, cube, black, sign*.068,.034,-.128,.11,.023,.025); brow.rotation.z=sign*.18;
-    const optic = shape(head, cube, energy, sign*.073,.031,-.143,.054,.008,.009); optic.rotation.z=sign*.18;
-    plate(head, secondary, [[sign*.078,.01],[sign*.12,-.01],[sign*.078,-.12],[sign*.036,-.15]], .026, 0, 0, -.11);
+    seam(head, secondary, [[sign*.103,.07,-.063],[sign*.089,-.032,-.112],[sign*.052,-.13,-.10]], .019);
+    seam(head, trim, [[sign*.112,.065,-.055],[sign*.111,-.02,-.072],[sign*.066,-.12,-.079]], .004);
     plate(head,secondary,[[sign*.025,.17],[sign*.082,.13],[sign*.095,-.045],[sign*.03,-.10]],.022,0,0,.107);
     shape(head,cube,energy,sign*.038,.05,.135,.009,.085,.01);
   }
-  const crest=plate(head, armor, [[-.045,-.035],[.036,.018],[.25,.19],[.11,.20],[-.035,.10],[-.08,.035]], .035, -.017, .09, -.016); crest.rotation.y=Math.PI/2;
-  const crestInset=plate(head, trim, [[.025,.02],[.19,.16],[.09,.16]], .006, -.021, .09, -.016); crestInset.rotation.y=Math.PI/2;
+  const crest=plate(head, armor, [[-.055,-.025],[.028,.008],[.215,.16],[.10,.175],[-.04,.085],[-.09,.025]], .027, -.013, .115, -.016, .003); crest.rotation.y=Math.PI/2;
+  const crestInset=plate(head, trim, [[.025,.02],[.16,.13],[.08,.14]], .004, -.017, .115, -.016, .001); crestInset.rotation.y=Math.PI/2;
   for(const sign of [-1,1]){
     plate(rig,secondary,[[sign*.035,1.0],[sign*.14,1.025],[sign*.205,.92],[sign*.16,.82],[sign*.06,.85]],.052,0,0,-.10);
     plate(rig,armor,[[sign*.14,1.04],[sign*.225,1.015],[sign*.245,.88],[sign*.19,.79],[sign*.153,.89]],.06,0,0,.015);
@@ -88,7 +122,7 @@ export function createCharacter(scene) {
   for (const [side, sign] of [['left', -1], ['right', 1]]) {
     const arm = new THREE.Group(); arm.position.set(sign*.285,.33,0); torso.add(arm); joints[side+'Arm']=arm;
     shape(arm,sphere,suit,0,-.045,0,.09,.11,.085);
-    const pauldron=shell(arm,armor,[[-.15,.073,.089],[-.10,.11,.113],[.025,.099,.088],[.065,.051,.04]],sign*.018);pauldron.rotation.z=sign*-.10;
+    const pauldron=shell(arm,armor,[[-.16,.054,.065],[-.085,.098,.094],[.025,.09,.082],[.065,.047,.038]],sign*.018);pauldron.rotation.z=sign*-.10;
     plate(arm,secondary,[[sign*.055,.02],[sign*.12,-.015],[sign*.104,-.13],[sign*.065,-.15]],.022,0,0,.075);
     shape(arm,cube,energy,sign*.109,-.043,-.014,.009,.09,.023);
     shell(arm,suit,[[-.32,.058,.059],[-.23,.069,.067],[-.13,.075,.073]]);
@@ -96,9 +130,9 @@ export function createCharacter(scene) {
     const elbow=new THREE.Group();elbow.position.y=-.32;arm.add(elbow);joints[side+'Elbow']=elbow;
     shape(elbow,sphere,black,0,0,0,.064,.067,.06);
     shell(elbow,suit,[[-.31,.045,.047],[-.21,.063,.065],[-.05,.057,.06]]);
-    plate(elbow,armor,[[-.07,-.045],[.076,-.045],[.064,-.15],[.045,-.29],[-.04,-.27],[-.071,-.12]],.048,0,0,-.073);
-    shape(elbow,cube,trim,0,-.165,-.083,.021,.16,.013);
-    shape(elbow,cube,energy,sign*.044,-.14,-.078,.008,.095,.009);
+    shell(elbow,armor,[[-.285,.034,.026],[-.20,.053,.040],[-.095,.073,.053],[-.035,.040,.031]],0,0,-.039);
+    seam(elbow,trim,[[0,-.044,-.083],[0,-.12,-.100],[0,-.24,-.083]],.005);
+    seam(elbow,energy,[[sign*.043,-.079,-.079],[sign*.049,-.14,-.082],[sign*.03,-.235,-.074]],.004);
     const hand=new THREE.Group();hand.position.y=-.31;elbow.add(hand);joints[side+'Hand']=hand;
     shape(hand,cube,black,0,-.035,0,.075,.082,.055);shape(hand,cube,secondary,0,-.027,-.031,.065,.063,.018);
     for(let finger=0;finger<4;finger++) {
@@ -115,11 +149,12 @@ export function createCharacter(scene) {
     shape(leg,cube,energy,sign*.071,-.2,-.097,.01,.11,.01);
     const knee=new THREE.Group();knee.position.y=-.46;leg.add(knee);joints[side+'Knee']=knee;
     shape(knee,sphere,black,0,0,0,.066,.07,.062);
-    plate(knee,armor,[[-.067,.055],[.067,.055],[.079,-.023],[0,-.10],[-.079,-.023]],.035,0,0,-.076);
+    shell(knee,armor,[[-.083,.031,.026],[-.022,.072,.039],[.039,.059,.034],[.055,.028,.018]],0,0,-.059);
     shape(knee,cube,trim,0,-.003,-.117,.032,.046,.01);
     shell(knee,suit,[[-.44,.046,.05],[-.29,.059,.068],[-.12,.066,.07],[-.06,.063,.065]]);
-    plate(knee,armor,[[-.064,-.10],[.064,-.10],[.075,-.2],[.047,-.40],[-.045,-.40],[-.074,-.22]],.047,0,0,-.074);
-    shape(knee,cube,energy,0,-.23,-.128,.01,.12,.013);
+    shell(knee,armor,[[-.405,.034,.028],[-.31,.047,.047],[-.185,.071,.054],[-.095,.051,.031]],0,0,-.036);
+    seam(knee,energy,[[0,-.12,-.082],[0,-.23,-.098],[0,-.35,-.082]],.0045);
+    seam(knee,trim,[[sign*.053,-.14,-.071],[sign*.05,-.24,-.075],[sign*.033,-.36,-.065]],.004);
     shell(knee,secondary,[[-.29,.068,.07],[-.20,.078,.085],[-.12,.065,.07]],0,0,.014);
     const foot=new THREE.Group();foot.position.y=-.44;knee.add(foot);joints[side+'Foot']=foot;
     shape(foot,sphere,black,0,-.025,-.06,.077,.052,.15);
@@ -151,6 +186,16 @@ export function createCharacter(scene) {
   const parentQ=new THREE.Quaternion(),aimQ=new THREE.Quaternion(),holsterQ=new THREE.Quaternion(),weaponQ=new THREE.Quaternion(),targetQ=new THREE.Quaternion();
   const chestPosition=new THREE.Vector3(),aimPosition=new THREE.Vector3(),holsterPosition=new THREE.Vector3(),weaponPosition=new THREE.Vector3();
   const gunEuler=new THREE.Euler(0,0,0,'YXZ'),holsterRotation=new THREE.Quaternion().setFromEuler(new THREE.Euler(1.3,0,.55));
+  const shotQ=new THREE.Quaternion(),shotOffset=new THREE.Vector3(),shotChest=new THREE.Vector3();
+  function sampleMuzzle(p, result = new THREE.Vector3()) {
+    // Keep the displayed torso offset, but sample this tick's position, view
+    // angles and selected weapon. Never fire from last frame's gun direction.
+    torso.getWorldPosition(shotChest); shotChest.sub(root.position).add(p.position);
+    const recoil=p.combat?.recoil||0, yaw=p.yaw, pitch=p.pitch||0;
+    shotQ.setFromEuler(gunEuler.set(pitch+recoil*.65,yaw,0,'YXZ'));
+    shotOffset.set(.16,.25,-.19+recoil*.20).applyAxisAngle(THREE.Object3D.DEFAULT_UP,yaw);
+    return result.copy(firearm.muzzles[p.combat?.selected??0]).applyQuaternion(shotQ).add(shotOffset).add(shotChest);
+  }
   function pointBone(bone, point, weight){
     bone.getWorldPosition(a);direction.copy(point).sub(a).normalize();
     targetQ.setFromUnitVectors(downAxis,direction);bone.parent.getWorldQuaternion(parentQ);targetQ.premultiply(parentQ.invert());
@@ -199,5 +244,5 @@ export function createCharacter(scene) {
     }
     shadow.visible=p.grounded;shadow.position.set(renderPosition.x,renderPosition.y+.018,renderPosition.z);
   }
-  return {root,rig,joints,weapon,firearm,meleeVisual,animator,update};
+  return {root,rig,joints,weapon,firearm,meleeVisual,animator,update,sampleMuzzle};
 }

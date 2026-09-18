@@ -3,8 +3,9 @@ import { solids, ramps, rampHeight, ziplines, spawns } from './world.js';
 import { MeleeController } from './melee.js';
 
 export const DEFAULTS = Object.freeze({
-  runSpeed: 7.6, sprintSpeed: 12.5, crouchSpeed: 3.2, aimSpeed: 4.8, acceleration: 60,
-  airAcceleration: 15, gravity: 25, jumpSpeed: 10.3, doubleJumpSpeed: 9.8,
+  runSpeed: 7.6, sprintSpeed: 12.5, crouchSpeed: 3.2, aimSpeed: 4.8, acceleration: 88,
+  braking: 115, turnAcceleration: 140, inputBuffer: .14,
+  airAcceleration: 15, airTurnRate: 2.6, gravity: 25, jumpSpeed: 10.3, doubleJumpSpeed: 9.8,
   bulletSpeed: 25, slideBoost: 4.8, slideFriction: 3.4,
   rollSpeed: 17.5, glideDuration: 3, latchDuration: 6, wallUpSpeed: 8.3,
 });
@@ -38,7 +39,8 @@ export class MovementController {
     this.slideTimer = 0; this.slideCooldown = 0; this.airKickCooldown = 0;
     this.hardLandTimer = 0; this.wallCooldown = 0; this.wallHopTimer = 0;
     this.wall = null; this.mantle = null; this.rope = null; this.coyote = 0;
-    this.jumpBuffer = 0; this.bufferedCrouch = false; this.slam = false; this.latchWallId = null;
+    this.jumpBuffer = 0; this.rollBuffer = 0; this.rollIntent = new Vector3();
+    this.bufferedCrouch = false; this.slam = false; this.latchWallId = null;
     this.lastImpact = 0; this.aiming = false; this.carryTimer = 0; this.lastCancel = null;
     this.melee.reset();
     this.refreshAir(true); this.emit('reset');
@@ -109,7 +111,7 @@ export class MovementController {
     if (!(dt > 0) || dt > .05) throw new Error('Movement requires fixed steps <= 50 ms');
     const cfg = this.config, p = this.position, v = this.velocity;
     this.clock += dt; this.actionTime += dt;
-    for (const key of ['rollTimer', 'rollCooldown', 'bulletTimer', 'doubleTimer', 'aimSuppressTimer', 'slideTimer', 'slideCooldown', 'airKickCooldown', 'hardLandTimer', 'wallCooldown', 'wallHopTimer', 'jumpBuffer', 'carryTimer']) this[key] = Math.max(0, this[key] - dt);
+    for (const key of ['rollTimer', 'rollCooldown', 'bulletTimer', 'doubleTimer', 'aimSuppressTimer', 'slideTimer', 'slideCooldown', 'airKickCooldown', 'hardLandTimer', 'wallCooldown', 'wallHopTimer', 'jumpBuffer', 'rollBuffer', 'carryTimer']) this[key] = Math.max(0, this[key] - dt);
     this.yaw = input.yaw ?? this.yaw;
     this.pitch = input.pitch ?? this.pitch;
     input = this.melee.step(dt, input, this);
@@ -124,7 +126,17 @@ export class MovementController {
     if (wish.lengthSq() > 1) wish.normalize();
     const moving = wish.lengthSq() > .001, direction = moving ? wish.clone().normalize() : forward;
     const crouching = !!input.crouch;
-    if (input.jumpPressed) { this.jumpBuffer = .12; this.bufferedCrouch = input.jumpCrouch ?? crouching; }
+    if (input.jumpPressed) { this.jumpBuffer = cfg.inputBuffer; this.bufferedCrouch = input.jumpCrouch ?? crouching; }
+    if (input.rollPressed) {
+      this.rollBuffer = cfg.inputBuffer;
+      if (Number.isFinite(input.rollX) && Number.isFinite(input.rollZ)) {
+        this.rollIntent.copy(forward).multiplyScalar(input.rollZ).addScaledVector(right, input.rollX);
+        if (this.rollIntent.lengthSq() < .001) this.rollIntent.copy(forward); else this.rollIntent.normalize();
+      } else this.rollIntent.copy(direction);
+    }
+    // A fresh conflicting action replaces a waiting roll; simultaneous jump/roll
+    // remains legal. A short buffer never grants another aerial action.
+    if (!input.rollPressed && (input.jumpPressed || input.slamPressed || input.meleePressed || input.heavyPressed)) this.rollBuffer = 0;
     const low = crouching || (this.rollTimer > 0 && this.grounded);
     this.height = low ? this.lowHeight : this.canStand() ? this.standingHeight : this.lowHeight;
     if (moving) this.facing = Math.atan2(-direction.x, -direction.z);
@@ -211,9 +223,10 @@ export class MovementController {
       }
     }
 
-    if (input.rollPressed && this.rollCooldown === 0 && (onGround || !this.airRollUsed)) {
+    if (this.rollBuffer > 0 && this.rollCooldown === 0 && (onGround || !this.airRollUsed)) {
       const speed = Math.max(this.speed + 2.5, cfg.rollSpeed);
-      v.x = direction.x * speed; v.z = direction.z * speed;
+      v.x = this.rollIntent.x * speed; v.z = this.rollIntent.z * speed;
+      this.rollBuffer = 0;
       if (!onGround) { this.airRollUsed = true; v.y = Math.max(v.y, 1.8); }
       this.rollTimer = .42; this.rollCooldown = .55; this.hardLandTimer = 0;
       this.bulletTimer = 0; this.doubleTimer = 0; startedParkour = startedRoll = true;
@@ -286,11 +299,15 @@ export class MovementController {
           const crouched = this.height < this.standingHeight;
           const speed = this.hardLandTimer > 0 ? 0 : crouched ? cfg.crouchSpeed : wantsAim ? cfg.aimSpeed : input.sprint ? cfg.sprintSpeed : cfg.runSpeed;
           const oldSpeed = this.speed;
-          const aligned = oldSpeed > .1 && (v.x * direction.x + v.z * direction.z) / oldSpeed > .55;
-          const carry = moving && !crouched && this.hardLandTimer === 0 && oldSpeed > speed && aligned;
+          const alignment = oldSpeed > .1 ? (v.x * direction.x + v.z * direction.z) / oldSpeed : 1;
+          const carry = moving && !crouched && !wantsAim && this.hardLandTimer === 0 && oldSpeed > speed && alignment > .55;
           const targetSpeed = carry ? Math.max(speed, oldSpeed - (this.carryTimer > 0 ? 6 : 12) * dt) : speed;
           const dx = wish.x * targetSpeed - v.x, dz = wish.z * targetSpeed - v.z;
-          const difference = Math.hypot(dx, dz), limit = cfg.acceleration * dt;
+          // Stop and redirect more promptly than we build speed. The vector
+          // budget keeps diagonal input identical to axial input.
+          const response = !moving || wantsAim && oldSpeed > speed ? cfg.braking :
+            cfg.acceleration + (cfg.turnAcceleration - cfg.acceleration) * clamp(1 - alignment, 0, 1);
+          const difference = Math.hypot(dx, dz), limit = response * dt;
           const fraction = difference > limit ? limit / difference : 1;
           v.x += dx * fraction; v.z += dz * fraction;
           this.state = this.hardLandTimer > 0 ? 'hardLand' : crouched ? 'crouch' : wantsAim ? moving ? 'aimWalk' : 'aim' : moving ? input.sprint ? 'sprint' : 'run' : 'idle';
@@ -317,10 +334,16 @@ export class MovementController {
             this.doubleTimer > 0 ? 'double' : v.y > 0 ? 'jump' : 'fall';
         }
         if (!this.slam && this.rollTimer === 0 && moving) {
-          // Rotate existing momentum toward input without clamping fast parkour to run speed.
-          const speed = Math.max(this.speed, cfg.runSpeed);
-          v.x = approach(v.x, direction.x * speed, cfg.airAcceleration * dt);
-          v.z = approach(v.z, direction.z * speed, cfg.airAcceleration * dt);
+          // Steer on the horizontal velocity arc, rather than braking each axis
+          // independently. Looking alone does not steer; vertical launch speed
+          // and parkour resources remain untouched.
+          const oldSpeed = this.speed, current = oldSpeed > .05 ? Math.atan2(v.x, v.z) : Math.atan2(direction.x, direction.z);
+          const target = Math.atan2(direction.x, direction.z);
+          const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+          const turn = Math.min(cfg.airTurnRate, cfg.airAcceleration / Math.max(oldSpeed, 1)) * dt;
+          const angle = current + clamp(delta, -turn, turn);
+          const speed = approach(oldSpeed, Math.max(oldSpeed, cfg.runSpeed), cfg.airAcceleration * dt);
+          v.x = Math.sin(angle) * speed; v.z = Math.cos(angle) * speed;
         }
       }
       if (this.grounded) v.y = Math.min(v.y, -.5);
@@ -335,7 +358,7 @@ export class MovementController {
       if (!wasGrounded) {
         this.lastImpact = Math.max(0, -impact); this.carryTimer = .28;
         this.refreshAir(true); this.bulletTimer = 0; this.doubleTimer = 0;
-        if (crouching || this.rollTimer > 0 || this.state === 'glide') {
+        if (crouching || this.rollTimer > 0 || this.rollBuffer > 0 && this.rollCooldown <= this.rollBuffer || this.state === 'glide') {
           this.hardLandTimer = 0; if (crouching) this.emit('slide');
         } else if (impact < -20) { this.hardLandTimer = .38; this.emit('hardLand'); }
         else this.emit('land');

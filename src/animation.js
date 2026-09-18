@@ -74,7 +74,7 @@ export class CharacterAnimator {
     if (wallStates.has(state) && p.wall && state !== 'wallRun') heading = Math.atan2(p.wall.normal.x, p.wall.normal.z);
     if (state === 'glide' || state === 'latch' || aimPose) heading = p.yaw;
     if (p.melee?.active && !busy) heading = p.melee.active.yaw;
-    this.facing.step(this.facing.value + angleDelta(this.facing.value, heading), 24, dt);
+    this.facing.step(this.facing.value + angleDelta(this.facing.value, heading), aimPose ? 36 : p.grounded ? 30 : 24, dt);
     const turnRate = dt > 0 ? angleDelta(this.previousFacing, this.facing.value) / dt : 0;
     this.bank.step(clamp(-turnRate * p.speed * .0045, -.24, .24), 14, dt);
     const speed = this.speed.step(p.speed, 22, dt);
@@ -98,8 +98,8 @@ export class CharacterAnimator {
       const cycle = (this.phase % 1) * Math.PI * 2;
       const travelHeading = p.speed > .1 ? Math.atan2(-p.velocity.x, -p.velocity.z) : this.facing.value;
       const relativeTravel = angleDelta(this.facing.value, travelHeading);
-      const forwardStride = 1 + (Math.cos(relativeTravel) - 1) * aimWeight;
-      const sideStride = Math.sin(relativeTravel) * .72 * aimWeight;
+      const forwardStride = Math.cos(relativeTravel);
+      const sideStride = Math.sin(relativeTravel) * .72;
       q.bodyY = (low ? -.67 : -.09 - run * .08) + Math.sin(cycle * 2 - .5) * .018 * run + this.landing.value;
       q.bodyX = Math.sin(cycle) * .020 * run + Math.sin(this.time*.8)*.006*(1-run);
       q.torsoX = (low ? -.93 : -.055 - run * .08 - sprint * .04) + this.accelerationLean.value + this.landing.value * 1.7;
@@ -218,9 +218,9 @@ export class CharacterAnimator {
     if (aimWeight > .001) {
       const twist = clamp(angleDelta(this.facing.value, p.yaw), -.8, .8);
       const aimPitch = Number.isFinite(p.pitch) ? p.pitch : 0;
-      const chestPitch = (p.grounded && p.height < 1 ? -.70 : -.06) + aimPitch * .22;
+      const chestPitch = (p.grounded && p.height < 1 ? -.70 : -.06) + aimPitch * .22 + this.accelerationLean.value * .35 + this.landing.value * .5;
       q.torsoX += (chestPitch - q.torsoX) * aimWeight;
-      q.torsoY += (twist - q.torsoY) * aimWeight;
+      q.torsoY += (twist - q.torsoY * .7) * aimWeight;
       q.headX += (clamp(aimPitch - q.torsoX, -.65, .8) - q.headX) * aimWeight;
       q.headY += (clamp(angleDelta(this.facing.value, p.yaw) - q.torsoY, -.55, .55) - q.headY) * aimWeight;
       q.leftArmX += (1.0 - q.leftArmX) * aimWeight; q.rightArmX += (.9 - q.rightArmX) * aimWeight;

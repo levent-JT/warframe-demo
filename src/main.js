@@ -7,6 +7,7 @@ import { ActionInput, ACTIONS, keyLabel, mouseLook } from './input.js';
 import { WEAPONS, MELEE_SETS, BRANCHES } from './melee.js';
 import { CombatController, GUNS } from './combat.js';
 import { createCombatVisual } from './combat-visual.js';
+import { ViewSample } from './view.js';
 
 const $ = id => document.getElementById(id);
 const safeStore = {
@@ -48,7 +49,7 @@ if(safeStore.get('combatControls14')!=='done'){
   safeStore.set('bindings13Backup',safeStore.get('bindings')||keys.serialize());
   keys.upgradeCombatControls();safeStore.set('bindings',keys.serialize());safeStore.set('tapSprintRoll',true);safeStore.set('combatControls14','done');
 }
-const fixed = 1 / 120, raycaster = new THREE.Raycaster();
+const fixed = 1 / 120;
 const renderPose = new RenderInterpolator(player.position);
 const speedBars = [];
 for (let i = 0; i < 18; i++) { const el = document.createElement('i'); $('speed-bars').append(el); speedBars.push(el); }
@@ -72,6 +73,7 @@ function beep(event) {
 }
 function pause() {
   active = false; keys.clear(); accumulator = 0; lastPointer = null;
+  player.jumpBuffer = player.rollBuffer = 0;
   canvas.classList.remove('playing');
   renderPose.reset(player.position);
   if (document.pointerLockElement) document.exitPointerLock();
@@ -290,6 +292,8 @@ $('zones-button').addEventListener('click', () => {
 });
 $('route-button').addEventListener('click', () => { startRoute(); start(); });
 const settings = [
+  ['acceleration', '起步响应', 45, 130, 1], ['braking', '松键制动', 60, 170, 1],
+  ['turnAcceleration', '转向响应', 90, 200, 1],
   ['sprintSpeed', '冲刺速度', 8, 18, .5], ['bulletSpeed', '子弹跳速度', 18, 34, .5],
   ['jumpSpeed', '跳跃力度', 7, 15, .1], ['gravity', '重力', 16, 36, .5],
   ['airAcceleration', '空中转向', 5, 32, 1], ['slideFriction', '滑铲摩擦', 1, 10, .2],
@@ -321,28 +325,30 @@ $('tuning-button').addEventListener('click', showTuning);
 const cameraHeight = new Spring(1.4), cameraDistance = new Spring(5.8), cameraFov = new Spring(baseFov);
 const cameraClearance = new Spring(6);
 const cameraShoulder = new Spring(.65 * shoulderSide);
-const cameraLook = new THREE.Vector3(), cameraRight = new THREE.Vector3(), cameraTarget = new THREE.Vector3();
-const cameraVector = new THREE.Vector3(), cameraAim = new THREE.Vector3();
+const renderView = new ViewSample(), shotView = new ViewSample();
+const cameraLook = renderView.direction, cameraAim = new THREE.Vector3(), shotMuzzle = new THREE.Vector3();
+function sampleShot() {
+  shotView.sample(player.position, {
+    yaw, pitch: THREE.MathUtils.clamp(pitch + combat.recoil * .22, -1.5, 1.5),
+    height: cameraHeight.value, distance: cameraDistance.value, shoulder: cameraShoulder.value,
+  }, collisionMeshes).limit(cameraClearance.value);
+  return { origin: shotView.origin, direction: shotView.direction, muzzle: character.sampleMuzzle(player, shotMuzzle) };
+}
 function updateCamera(dt, position) {
   const viewPitch=THREE.MathUtils.clamp(pitch+combat.recoil*.22,-1.5,1.5);
-  cameraLook.set(-Math.sin(yaw) * Math.cos(viewPitch), Math.sin(viewPitch), -Math.cos(yaw) * Math.cos(viewPitch));
-  cameraRight.set(Math.cos(yaw), 0, -Math.sin(yaw));
   const aiming = keys.down('aim'), height = player.height < 1 ? .80 : 1.4;
   const distance = aiming ? 3.4 : 5.8 + Math.min(player.speed * .024, .6);
   const fov = baseFov + (aiming ? -8 : Math.min(9, player.speed * .28));
   if (snapCamera) { cameraHeight.reset(height); cameraDistance.reset(distance); cameraFov.reset(fov); }
   // Follow the same interpolated root as the character. Only offsets are damped,
   // so speed changes no longer leave the camera dragging behind the player.
-  cameraTarget.copy(position); cameraTarget.y += cameraHeight.step(height, 26, dt);
-  cameraVector.copy(cameraLook).multiplyScalar(-cameraDistance.step(distance, 18, dt)).addScaledVector(cameraRight, cameraShoulder.step(.65 * shoulderSide, 20, dt));
-  const length = cameraVector.length(); cameraVector.normalize();
-  raycaster.set(cameraTarget, cameraVector); raycaster.far = length;
-  const hit = raycaster.intersectObjects(collisionMeshes, false)[0];
-  const safeLength = hit ? Math.max(.20, hit.distance - .25) : length;
+  renderView.sample(position, { yaw, pitch: viewPitch, height: cameraHeight.step(height, 26, dt),
+    distance: cameraDistance.step(distance, 18, dt), shoulder: cameraShoulder.step(.65 * shoulderSide, 20, dt) }, collisionMeshes);
+  const safeLength = renderView.safeLength;
   // Pull in immediately at obstacles, ease back out after clearing them.
   if (snapCamera || safeLength < cameraClearance.value) cameraClearance.reset(safeLength);
   const boom = Math.min(safeLength, cameraClearance.step(safeLength, 18, dt));
-  camera.position.copy(cameraTarget).addScaledVector(cameraVector, boom);
+  camera.position.copy(renderView.limit(boom).origin);
   character.root.visible = boom > .65;
   camera.lookAt(cameraAim.copy(camera.position).addScaledVector(cameraLook, 20));
   camera.fov = cameraFov.step(fov, 12, dt); camera.updateProjectionMatrix(); snapCamera = false;
@@ -428,7 +434,7 @@ function frame(now) {
     while (accumulator >= fixed) {
       renderPose.capture(player.position);
       const input=readInput();player.step(fixed, combat.prepareInput(input,player));
-      combat.step(fixed,input,player,{origin:camera.position,direction:cameraLook,muzzle:character.animator.gunWeight.value>.9?character.firearm.muzzle:undefined});
+      combat.step(fixed,input,player,sampleShot);
       for(const event of combat.events.splice(0)){
         combatVisual.event(event);beep(event.type);
         if(event.type==='swap')safeStore.set('gun',combat.selected);
@@ -477,5 +483,6 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has('test')) {
     aimAt: point => { const delta=point.clone().sub(camera.position).normalize();yaw=Math.atan2(-delta.x,-delta.z);pitch=Math.asin(delta.y); },
   };
   if(new URLSearchParams(location.search).get('test')==='combat')import('../tests/combat-harness.js').then(({install})=>install(window.__KINETIC__));
+  else if(new URLSearchParams(location.search).get('test')==='response')import('../tests/responsiveness-harness.js').then(({install})=>install(window.__KINETIC__));
   else import('../tests/browser-harness.js').then(({ install }) => install(window.__KINETIC__));
 }

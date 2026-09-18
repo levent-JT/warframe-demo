@@ -97,35 +97,41 @@ export class ActionInput {
   }
   down(action) { return this.bindings[action]?.some(code => code && this.held.has(code)) || false; }
   pressed(action) { return this.edges.has(action); }
+  movementAxes() { return { x: Number(this.down('right')) - Number(this.down('left')), z: Number(this.down('forward')) - Number(this.down('back')) }; }
   press(rawCode, now = 0) {
     const code = normalizeCode(rawCode);
     if (this.held.has(code)) return [];
     this.held.add(code); const actions = this.actionsFor(code);
     for (const action of actions) this.edges.add(action);
     if (actions.includes('jump')) this.jumpPosture = this.down('crouch');
-    if (actions.includes('sprint')) { this.sprintPressedAt = now; this.sprintGestureConsumed = false; }
+    if (actions.includes('roll')) this.rollAxes = this.movementAxes();
+    if (actions.includes('sprint')) { this.sprintPressedAt = now; this.sprintGestureConsumed = false; this.sprintAxes = this.movementAxes(); }
     return actions;
   }
   release(rawCode, now = 0) {
     this.updateSprint(now);
     const code = normalizeCode(rawCode), wasHeld = this.held.delete(code);
     if (wasHeld && this.actionsFor(code).includes('sprint')) {
-      if (this.tapSprintRoll && this.sprintPressedAt !== null && !this.sprintGestureConsumed) this.edges.add('roll');
+      if (this.tapSprintRoll && this.sprintPressedAt !== null && !this.sprintGestureConsumed) {
+        this.edges.add('roll'); const axes=this.movementAxes();
+        this.rollAxes = axes.x || axes.z ? axes : this.sprintAxes;
+      }
       this.sprintPressedAt = null;
     }
   }
-  consumeEdges() { this.edges.clear(); this.jumpPosture = null; }
+  consumeEdges() { this.edges.clear(); this.jumpPosture = null; this.rollAxes = null; }
   updateSprint(now) {
     if (this.sprintPressedAt !== null && !this.sprintGestureConsumed && now - this.sprintPressedAt >= 250) {
       this.sprintToggled = !this.sprintToggled; this.sprintGestureConsumed = true;
     }
   }
-  clear() { this.held.clear(); this.consumeEdges(); this.sprintPressedAt = null; this.sprintGestureConsumed = false; this.sprintToggled = false; }
+  clear() { this.held.clear(); this.consumeEdges(); this.sprintPressedAt = null; this.sprintGestureConsumed = false; this.sprintToggled = false; this.sprintAxes = null; }
   read(yaw, pitch, now = 0) {
     this.updateSprint(now);
     return { x: Number(this.down('right')) - Number(this.down('left')), z: Number(this.down('forward')) - Number(this.down('back')),
       jumpHeld: this.down('jump'), jumpPressed: this.pressed('jump'), jumpCrouch: this.jumpPosture,
       crouch: this.down('crouch'), crouchPressed: this.pressed('crouch'), sprint: this.sprintToggled, rollPressed: this.pressed('roll'),
+      rollX: this.rollAxes?.x, rollZ: this.rollAxes?.z,
       aim: this.down('aim'), aimPressed: this.pressed('aim'), interactPressed: this.pressed('interact'), slamPressed: this.pressed('slam'),
       meleePressed: this.pressed('melee'), meleeHeld: this.down('melee'), heavyPressed: this.pressed('heavy'), switchWeaponPressed: this.pressed('switchWeapon'),
       firePressed: this.pressed('fire'), fireHeld: this.down('fire'), reloadPressed: this.pressed('reload'), quickSwapPressed: this.pressed('quickSwap'),

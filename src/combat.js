@@ -132,7 +132,7 @@ export class CombatController {
     const busy=p.rollTimer>0||p.bulletTimer>0||p.doubleTimer>0||p.slam||p.mantle||p.rope;
     const trigger=this.gun.type==='AUTO'?input.fireHeld||input.firePressed:input.firePressed;
     if(trigger&&!this.fireBlocked&&!p.melee.drawn&&!p.melee.active&&!busy&&!this.swapLeft&&!this.reloadLeft&&!this.cooldown) {
-      if(this.magazine>0)this.fire(p,input,aim);else this.reload();
+      if(this.magazine>0)this.fire(p,input,typeof aim==='function'?aim():aim);else this.reload();
     }
     this.resolveMelee(p);
     if(this.mode!=='off')for(const bot of this.bots)this.updateBot(bot,dt,p);
